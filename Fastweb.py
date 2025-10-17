@@ -79,9 +79,20 @@ async def webhook(request: Request):
         if any(fname.endswith((".py", ".ipynb", "README.md")) for fname in all_changed_files):
             logger.info("🤖 Triggering README generator agent...")
             try:
-                output = generate_updated_readme(repo_name=repo, branch=branch)
+                # 🟢 FIXED: pass state dict instead of repo_name & branch args
+                state = {
+                    "repo": repo,
+                    "branch": branch,
+                    "base_sha": None,
+                    "head_sha": None,
+                    "total_files_changed": len(all_changed_files),
+                    "files": all_changed_files,
+                    "messages": [commit.get("message", "") for commit in commits]
+                }
+
+                output = generate_updated_readme(state)
                 logger.info("✅ README generation completed successfully.")
-                logger.info(f"📝 Generated README preview:\n{output[:500]}")  # log first few lines
+                logger.info(f"📝 Generated README preview:\n{str(output)[:500]}")  # log first few lines
             except Exception as agent_err:
                 logger.exception("⚠️ Error running README generator agent")
         else:

@@ -4,10 +4,10 @@ on:
   push:
     branches: [ master ]
     paths-ignore:
-      - 'README.md'          # skip workflow if only README changes
+      - 'README.md'  # skip workflow if only README changes
 
 permissions:
-  contents: write            # allow pushing changes
+  contents: write  # allow pushing changes
 
 jobs:
   update-readme:
@@ -28,7 +28,12 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          else
+            echo "⚠️ No requirements.txt found, installing basic deps..."
+            pip install fastapi uvicorn openai langchain langchain-openai
+          fi
 
       # --- 4️⃣ Run README generator agent ---
       - name: Run README generator
@@ -38,22 +43,19 @@ jobs:
           TOKEN_GITHUB: ${{ secrets.GITHUB_TOKEN }}
         run: |
           python - <<'EOF'
-          import os, json
-          from Readme_updater_agent import generate_updated_readme
-          from State import RepoState
+          import os, json, subprocess
+          from Readme_Updater_agent import generate_updated_readme  # match your filename exactly
 
-          # Define state (example — these SHAs will come from latest commit refs)
           repo = os.getenv("GITHUB_REPOSITORY")
           head_sha = os.getenv("GITHUB_SHA")
-
-          # Read previous commit (base)
-          import subprocess
           base_sha = subprocess.getoutput("git rev-parse HEAD~1")
 
           print(f"🔍 Repo: {repo} | Base: {base_sha[:7]} | Head: {head_sha[:7]}")
 
+          # ✅ Same structure as Fastweb.py
           state = {
               "repo": repo,
+              "branch": os.getenv("GITHUB_REF_NAME", "master"),
               "base_sha": base_sha,
               "head_sha": head_sha,
               "total_files_changed": 0,
@@ -61,7 +63,9 @@ jobs:
               "messages": []
           }
 
+          print("🤖 Running generate_updated_readme...")
           result = generate_updated_readme(state)
+
           print("✅ Agent finished. Summary:")
           print(json.dumps(result, indent=2))
           EOF
@@ -71,6 +75,15 @@ jobs:
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add data/UPDATED_README.md || echo "No file found"
-          git diff --quiet && echo "No changes to commit" || git commit -m "🤖 Auto-update README"
+
+          # Check if updated file exists
+          if [ -f "data/UPDATED_README.md" ]; then
+            git add data/UPDATED_README.md
+          elif [ -f "README.md" ]; then
+            git add README.md
+          else
+            echo "⚠️ No README file to update."
+          fi
+
+          git diff --quiet && echo "🟢 No changes to commit" || git commit -m "🤖 Auto-update README"
           git push
