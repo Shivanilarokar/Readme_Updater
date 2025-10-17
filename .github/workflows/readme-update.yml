@@ -1,0 +1,76 @@
+name: 🤖 Auto README Updater
+
+on:
+  push:
+    branches: [ master ]
+    paths-ignore:
+      - 'README.md'          # skip workflow if only README changes
+
+permissions:
+  contents: write            # allow pushing changes
+
+jobs:
+  update-readme:
+    runs-on: ubuntu-latest
+
+    steps:
+      # --- 1️⃣ Checkout repo ---
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # --- 2️⃣ Setup Python ---
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      # --- 3️⃣ Install dependencies ---
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # --- 4️⃣ Run README generator agent ---
+      - name: Run README generator
+        env:
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
+          OPENAI_MODEL: gpt-4o-mini
+          TOKEN_GITHUB: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python - <<'EOF'
+          import os, json
+          from readme_updater_agent import generate_updated_readme
+          from State import RepoState
+
+          # Define state (example — these SHAs will come from latest commit refs)
+          repo = os.getenv("GITHUB_REPOSITORY")
+          head_sha = os.getenv("GITHUB_SHA")
+
+          # Read previous commit (base)
+          import subprocess
+          base_sha = subprocess.getoutput("git rev-parse HEAD~1")
+
+          print(f"🔍 Repo: {repo} | Base: {base_sha[:7]} | Head: {head_sha[:7]}")
+
+          state = {
+              "repo": repo,
+              "base_sha": base_sha,
+              "head_sha": head_sha,
+              "total_files_changed": 0,
+              "files": [],
+              "messages": []
+          }
+
+          result = generate_updated_readme(state)
+          print("✅ Agent finished. Summary:")
+          print(json.dumps(result, indent=2))
+          EOF
+
+      # --- 5️⃣ Commit and push README update ---
+      - name: Commit README update
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add data/UPDATED_README.md || echo "No file found"
+          git diff --quiet && echo "No changes to commit" || git commit -m "🤖 Auto-update README"
+          git push
