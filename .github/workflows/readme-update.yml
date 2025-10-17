@@ -39,7 +39,7 @@ jobs:
         run: |
           python - <<'EOF'
           import os, json
-          from readme_updater_agent import generate_updated_readme
+          from Readme_updater_agent import generate_updated_readme
           from State import RepoState
 
           # Define state (example — these SHAs will come from latest commit refs)

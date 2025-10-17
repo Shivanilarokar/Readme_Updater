@@ -3,3 +3,6 @@ fastapi
 requests 
 langchain.tools 
 langgraph
+langchain
+openai
+pydantic
