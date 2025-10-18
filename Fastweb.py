@@ -94,12 +94,12 @@ async def webhook(request: Request):
                 logger.info(f"🔍 Base SHA: {base_sha}")
                 logger.info(f"🔍 Head SHA: {head_sha}")
                 
-                # 🟢 NEW: Fetch actual diff data from GitHub API
+                # 🟢 FIXED SYNTAX HERE
                 diff_data = fetch_commit_diffs.invoke({
-                    "owner"=owner,
-                    "repo":repo_name,
-                    "base_sha":base_sha,
-                    "head_sha":head_sha
+                    "owner": owner,
+                    "repo": repo_name,
+                    "base_sha": base_sha,
+                    "head_sha": head_sha
                 })
                 
                 if "error" in diff_data:
