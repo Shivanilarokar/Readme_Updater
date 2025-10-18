@@ -1,4 +1,4 @@
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request 
 import logging, sys, json, os
 from Readme_Updater_agent import generate_updated_readme  # uses clean README generator agent
 from githubapitoolcall import fetch_commit_diffs  # GitHub diff tool to fetch the diff between two commits
@@ -67,10 +67,24 @@ async def webhook(request: Request):
         head_sha = payload.get("after", "")
 
         logger.info("🔧 Fetching commit diff data from GitHub API...")
-        diff_data = fetch_commit_diffs(owner, repo, base_sha, head_sha)
-        if "error" in diff_data:
-            logger.error(f"❌ Error fetching diff data: {diff_data['error']}")
-            return {"ok": False, "error": diff_data["error"]}
+        
+        # StructuredTool → .invoke  tool call to fetch the diff between two commits
+        diff_data = fetch_commit_diffs.invoke({
+            "owner": owner,
+            "repo": repo,
+            "base_sha": base_sha,
+            "head_sha": head_sha
+        })
+
+        if isinstance(diff_data, str):
+            try:
+                diff_data = json.loads(diff_data)
+            except Exception:
+                pass
+
+        if not diff_data or "files" not in diff_data:
+            logger.error(f"❌ Failed to fetch diff data: {diff_data}")
+            return {"ok": False, "error": "No diff data returned"}
 
         logger.info(f"✅ Fetched diff for {diff_data.get('total_files_changed', 0)} files")
 
