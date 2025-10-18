@@ -1,6 +1,7 @@
 from fastapi import FastAPI, Request
 import logging, sys, json, os
-from Readme_Updater_agent import generate_updated_readme  
+from Readme_Updater_agent import generate_updated_readme 
+from githubapitoolcall import fetch_commit_diffs
 
 # ---------------- Logging setup (Azure-friendly) ----------------
 root_logger = logging.getLogger()
@@ -95,10 +96,10 @@ async def webhook(request: Request):
                 
                 # 🟢 NEW: Fetch actual diff data from GitHub API
                 diff_data = fetch_commit_diffs.invoke({
-                    owner=owner,
-                    repo=repo_name,
-                    base_sha=base_sha,
-                    head_sha=head_sha
+                    "owner"=owner,
+                    "repo":repo_name,
+                    "base_sha":base_sha,
+                    "head_sha":head_sha
                 })
                 
                 if "error" in diff_data:
