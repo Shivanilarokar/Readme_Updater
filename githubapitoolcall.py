@@ -2,7 +2,7 @@ import os
 import json
 import logging
 import requests
-from langchain.tools import tool
+from langchain_core.tools import tool
 
 # ---------------- Logging setup (Azure-friendly) ----------------
 logging.basicConfig(

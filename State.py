@@ -7,7 +7,9 @@ class RepoState(TypedDict):
     Compatible with fetch_commit_diffs output.
     """
 
-    repo: str                    # e.g. "shivani/ai-readme-updater"
+    repo: str                    # e.g. "ai-readme-updater"
+    owner: str                   # e.g. "shivani"
+    branch: str                  # branch name
     base_sha: str                # base commit SHA
     head_sha: str                # head commit SHA
     total_files_changed: int     # number of files changed
