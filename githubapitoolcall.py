@@ -47,7 +47,7 @@ def fetch_commit_diffs(owner: str, repo: str, base_sha: str, head_sha: str) -> d
             "Authorization": f"token {token}",
         }
 
-        logger.info(f"🔍 Fetching diff between {base_sha[:7]} → {head_sha[:7]} for {owner}/{repo}")
+        logger.info(f"🔍 Fetching diff between {base_sha[:30]} → {head_sha[:30]} for {owner}/{repo}")
         response = requests.get(url, headers=headers)
 
         
