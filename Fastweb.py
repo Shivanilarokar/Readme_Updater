@@ -88,19 +88,43 @@ async def webhook(request: Request):
                 owner = repo_parts[0]
                 repo_name = repo_parts[1]
                 
-                # 🟢 FIXED: pass state dict with proper commit SHAs
+                logger.info(f"🔍 Fetching detailed diff data from GitHub API...")
+                logger.info(f"🔍 Repository: {owner}/{repo_name}")
+                logger.info(f"🔍 Base SHA: {base_sha}")
+                logger.info(f"🔍 Head SHA: {head_sha}")
+                
+                # 🟢 NEW: Fetch actual diff data from GitHub API
+                from githubapitoolcall import fetch_commit_diffs
+                diff_data = fetch_commit_diffs(
+                    owner=owner,
+                    repo=repo_name,
+                    base_sha=base_sha,
+                    head_sha=head_sha
+                )
+                
+                if "error" in diff_data:
+                    logger.error(f"❌ Error fetching diff data: {diff_data['error']}")
+                    return {"ok": False, "error": f"Failed to fetch diff data: {diff_data['error']}"}
+                
+                logger.info(f"✅ Successfully fetched diff data for {diff_data.get('total_files_changed', 0)} files")
+                
+                # 🟢 Enhanced: pass actual diff data for accurate analysis
                 state = {
                     "repo": repo_name,
                     "owner": owner,
                     "branch": branch,
                     "base_sha": base_sha,
                     "head_sha": head_sha,
-                    "total_files_changed": len(all_changed_files),
-                    "files": all_changed_files,
-                    "messages": [commit.get("message", "") for commit in commits]
+                    "total_files_changed": diff_data.get("total_files_changed", 0),
+                    "files": diff_data.get("files", []),  # Actual diff data from GitHub API
+                    "messages": [commit.get("message", "") for commit in commits],
+                    "commit_details": commits,  # Full commit details
+                    "pusher": pusher,
+                    "repository_url": payload.get("repository", {}).get("html_url", ""),
+                    "compare_url": payload.get("compare", "")
                 }
                 
-                logger.info(f"🔍 State being passed to agent: {state}")
+                logger.info(f"🔍 State with diff data: {len(state['files'])} files with actual changes")
 
                 output = generate_updated_readme(state)
                 logger.info("✅ README generation completed successfully.")
