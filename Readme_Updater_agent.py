@@ -4,6 +4,7 @@ import os
 import json
 import logging
 import requests
+import time
 from langchain_openai import ChatOpenAI
 from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
@@ -41,11 +42,18 @@ Write a README.md update that:
 """
 
 # ---------------- Model ----------------
-llm = ChatOpenAI(
-    model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
-    api_key=os.getenv("OPENAI_API_KEY"),
-    temperature=0.6,
-)
+def get_llm():
+    """Get LLM instance with proper error handling."""
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        logger.warning("⚠️ OPENAI_API_KEY not found - LLM will not work without it")
+        return None
+    
+    return ChatOpenAI(
+        model=os.getenv("OPENAI_MODEL", "gpt-4o-mini"),
+        api_key=api_key,
+        temperature=0.6,
+    )
 
 # ---------------- GitHub API Functions ----------------
 def commit_readme_to_github(owner: str, repo: str, content: str, commit_message: str = "🤖 Auto-update README.md"):
@@ -64,6 +72,9 @@ def commit_readme_to_github(owner: str, repo: str, content: str, commit_message:
             "Accept": "application/vnd.github.v3+json",
             "Authorization": f"token {token}",
         }
+        
+        logger.info(f"🔍 GitHub API URL: {url}")
+        logger.info(f"🔍 Owner: {owner}, Repo: {repo}")
 
         # Get current file info
         response = requests.get(url, headers=headers)
@@ -112,10 +123,73 @@ def commit_readme_to_github(owner: str, repo: str, content: str, commit_message:
             return {"success": True, "commit_sha": commit_sha, "commit_url": commit_url}
         else:
             logger.error(f"❌ Error committing README: {response.status_code} - {response.text}")
-            return {"error": f"Failed to commit: {response.status_code} - {response.text}"}
+            logger.info("🔄 Attempting to create a Pull Request instead...")
+            
+            # Try to create a PR as fallback
+            pr_result = create_pull_request(owner, repo, readme_text, commit_message)
+            if "error" not in pr_result:
+                return {"success": True, "pr_url": pr_result.get("html_url"), "pr_number": pr_result.get("number")}
+            else:
+                return {"error": f"Failed to commit: {response.status_code} - {response.text}"}
 
     except Exception as e:
         logger.exception(f"❌ Exception committing README: {e}")
+        return {"error": str(e)}
+
+def create_pull_request(owner: str, repo: str, content: str, commit_message: str):
+    """
+    Create a Pull Request with the updated README as fallback.
+    """
+    try:
+        token = os.getenv("TOKEN_GITHUB") or os.getenv("GITHUB_TOKEN")
+        if not token:
+            return {"error": "Missing GitHub token"}
+
+        # Create a new branch
+        branch_name = f"autodoc-readme-update-{int(time.time())}"
+        
+        # First, create the branch
+        branch_url = f"https://api.github.com/repos/{owner}/{repo}/git/refs"
+        branch_data = {
+            "ref": f"refs/heads/{branch_name}",
+            "sha": "master"  # or get from API
+        }
+        
+        headers = {
+            "Accept": "application/vnd.github.v3+json",
+            "Authorization": f"token {token}",
+        }
+        
+        logger.info(f"🔍 Creating branch: {branch_name}")
+        response = requests.post(branch_url, headers=headers, json=branch_data)
+        
+        if response.status_code not in [200, 201]:
+            logger.error(f"❌ Failed to create branch: {response.status_code}")
+            return {"error": f"Failed to create branch: {response.status_code}"}
+        
+        # Now create the PR
+        pr_url = f"https://api.github.com/repos/{owner}/{repo}/pulls"
+        pr_data = {
+            "title": commit_message,
+            "head": branch_name,
+            "base": "master",
+            "body": f"🤖 Auto-generated README update\n\nThis PR contains an automatically generated README update based on recent code changes."
+        }
+        
+        logger.info(f"🔍 Creating PR: {pr_data['title']}")
+        response = requests.post(pr_url, headers=headers, json=pr_data)
+        
+        if response.status_code in [200, 201]:
+            pr_data = response.json()
+            logger.info("✅ Successfully created Pull Request")
+            logger.info(f"🔗 PR URL: {pr_data.get('html_url')}")
+            return {"success": True, "html_url": pr_data.get("html_url"), "number": pr_data.get("number")}
+        else:
+            logger.error(f"❌ Failed to create PR: {response.status_code} - {response.text}")
+            return {"error": f"Failed to create PR: {response.status_code}"}
+            
+    except Exception as e:
+        logger.exception(f"❌ Exception creating PR: {e}")
         return {"error": str(e)}
 
 # ---------------- Node Logic ----------------
@@ -153,6 +227,11 @@ def generate_updated_readme(state: RepoState):
         )
 
         logger.info("🧠 Generating updated README via LLM...")
+        llm = get_llm()
+        if not llm:
+            logger.error("❌ Cannot generate README without OpenAI API key")
+            return {"messages": [f"Error: OpenAI API key not found"]}
+        
         response = llm.invoke(
             [
                 {"role": "system", "content": SYSTEM_PROMPT},
@@ -173,12 +252,19 @@ def generate_updated_readme(state: RepoState):
         # Commit to GitHub
         logger.info("📤 Committing updated README to GitHub...")
         logger.info(f"🔍 Committing to: {state.get('owner', 'Shivanilarokar')}/{state['repo']}")
-        commit_result = commit_readme_to_github(
-            owner=state.get("owner", "Shivanilarokar"),
-            repo=state["repo"],
-            content=readme_text,
-            commit_message=f"🤖 Auto-update README.md based on changes in {state['base_sha'][:7] if state['base_sha'] else 'unknown'}...{state['head_sha'][:7] if state['head_sha'] else 'unknown'}"
-        )
+        logger.info(f"🔍 README content length: {len(readme_text)} characters")
+        
+        try:
+            commit_result = commit_readme_to_github(
+                owner=state.get("owner", "Shivanilarokar"),
+                repo=state["repo"],
+                content=readme_text,
+                commit_message=f"🤖 Auto-update README.md based on changes in {state['base_sha'][:7] if state['base_sha'] else 'unknown'}...{state['head_sha'][:7] if state['head_sha'] else 'unknown'}"
+            )
+            logger.info(f"🔍 Commit result: {commit_result}")
+        except Exception as commit_error:
+            logger.error(f"❌ Exception during GitHub commit: {commit_error}")
+            commit_result = {"error": str(commit_error)}
 
         if "error" in commit_result:
             logger.error(f"❌ Failed to commit to GitHub: {commit_result['error']}")
@@ -193,20 +279,36 @@ def generate_updated_readme(state: RepoState):
                 "commit_error": commit_result["error"]
             }
         else:
-            logger.info("✅ Successfully committed README to GitHub")
-            logger.info(f"🔗 View your updated README at: {commit_result.get('commit_url', 'N/A')}")
-            return {
-                "repo": state["repo"],
-                "owner": state.get("owner"),
-                "base_sha": state["base_sha"],
-                "head_sha": state["head_sha"],
-                "total_files_changed": state["total_files_changed"],
-                "files": state["files"],
-                "messages": [{"role": "assistant", "content": readme_text}],
-                "commit_success": True,
-                "commit_sha": commit_result.get("commit_sha"),
-                "commit_url": commit_result.get("commit_url")
-            }
+            if "pr_url" in commit_result:
+                logger.info("✅ Successfully created Pull Request")
+                logger.info(f"🔗 View your PR at: {commit_result.get('pr_url', 'N/A')}")
+                return {
+                    "repo": state["repo"],
+                    "owner": state.get("owner"),
+                    "base_sha": state["base_sha"],
+                    "head_sha": state["head_sha"],
+                    "total_files_changed": state["total_files_changed"],
+                    "files": state["files"],
+                    "messages": [{"role": "assistant", "content": readme_text}],
+                    "pr_success": True,
+                    "pr_url": commit_result.get("pr_url"),
+                    "pr_number": commit_result.get("pr_number")
+                }
+            else:
+                logger.info("✅ Successfully committed README to GitHub")
+                logger.info(f"🔗 View your updated README at: {commit_result.get('commit_url', 'N/A')}")
+                return {
+                    "repo": state["repo"],
+                    "owner": state.get("owner"),
+                    "base_sha": state["base_sha"],
+                    "head_sha": state["head_sha"],
+                    "total_files_changed": state["total_files_changed"],
+                    "files": state["files"],
+                    "messages": [{"role": "assistant", "content": readme_text}],
+                    "commit_success": True,
+                    "commit_sha": commit_result.get("commit_sha"),
+                    "commit_url": commit_result.get("commit_url")
+                }
 
     except Exception as e:
         logger.exception("❌ Error generating README")
