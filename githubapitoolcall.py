@@ -30,17 +30,13 @@ def fetch_commit_diffs(owner: str, repo: str, base_sha: str, head_sha: str) -> d
     """
 
     try:
-       
         # Read GitHub token from environment
-       
         token = os.getenv("TOKEN_GITHUB") or os.getenv("GITHUB_TOKEN")
         if not token:
             logger.error("❌ Missing GitHub token (TOKEN_GITHUB or GITHUB_TOKEN).")
             return {"error": "Missing GitHub token in environment variables"}
 
-      
-        #  Prepare GitHub API request
-       
+        # Prepare GitHub API request
         url = f"https://api.github.com/repos/{owner}/{repo}/compare/{base_sha}...{head_sha}"
         headers = {
             "Accept": "application/vnd.github.v3+json",
@@ -50,9 +46,7 @@ def fetch_commit_diffs(owner: str, repo: str, base_sha: str, head_sha: str) -> d
         logger.info(f"🔍 Fetching diff between {base_sha[:30]} → {head_sha[:30]} for {owner}/{repo}")
         response = requests.get(url, headers=headers)
 
-        
         # Handle API errors
-      
         if response.status_code != 200:
             logger.warning(
                 f"⚠️ GitHub API responded with {response.status_code}: {response.text[:200]}"
@@ -63,8 +57,7 @@ def fetch_commit_diffs(owner: str, repo: str, base_sha: str, head_sha: str) -> d
         files = data.get("files", [])
         logger.info(f"📁 {len(files)} files changed between commits.")
 
-     
-        # 🧩 Extract file diff details
+        # Extract file diff details
         changes_summary = []
         for f in files:
             file_info = {
@@ -84,14 +77,8 @@ def fetch_commit_diffs(owner: str, repo: str, base_sha: str, head_sha: str) -> d
             "files": changes_summary,
         }
 
-    
-        # 💾 Save diff to disk (for agents)
-        os.makedirs("data", exist_ok=True)
-        output_path = os.path.join("data", "commit_diff.json")
-        with open(output_path, "w", encoding="utf-8") as f:
-            json.dump(output, f, indent=2)
-
-        logger.info(f"✅ Diff details saved successfully → {output_path}")
+        # Return directly to the agent (no file saving)
+        logger.info("✅ Diff data prepared successfully and ready for agent consumption.")
         return output
 
     except Exception as e:

@@ -21,7 +21,7 @@ app = FastAPI()
 @app.get("/")
 def home():
     """Basic health check endpoint."""
-    logger.info("🚀 Health check passed")
+    logger.info("Health check passed")
     return {"message": "Hello from FastAPI Webhook!"}
 
 
@@ -88,7 +88,7 @@ async def webhook(request: Request):
 
         logger.info(f"✅ Fetched diff for {diff_data.get('total_files_changed', 0)} files")
 
-        # ✅ Build RepoState for the agent
+        # Build RepoState for the agent
         state = {
             "repo": repo,
             "owner": owner,
@@ -104,7 +104,7 @@ async def webhook(request: Request):
             "compare_url": payload.get("compare", ""),
         }
 
-        # ✅ Call README generation agent
+        #  Call README generation agent
         logger.info("🤖 Running README generator agent...")
         result = generate_updated_readme(state)
 

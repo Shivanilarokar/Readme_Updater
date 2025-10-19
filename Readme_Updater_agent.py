@@ -67,7 +67,8 @@ def get_llm():
 # ---------------- GitHub API Function ----------------
 def commit_readme_to_github(owner: str, repo: str, content: str, branch: str = "main") -> dict:
     """
-    Create or update README.md in the main branch directly.
+    Create or update README.md in the given branch.
+    Uses branch param when checking/committing so it's not hardcoded.
     """
     try:
         token = os.getenv("TOKEN_GITHUB") or os.getenv("GITHUB_TOKEN")
@@ -81,9 +82,18 @@ def commit_readme_to_github(owner: str, repo: str, content: str, branch: str = "
             "Authorization": f"token {token}",
         }
 
-        # Get current README (if exists)
-        response = requests.get(url, headers=headers)
-        sha = response.json().get("sha") if response.status_code == 200 else None
+        # Check if README exists on the specified branch
+        response = requests.get(url, headers=headers, params={"ref": branch})
+        sha = None
+        if response.status_code == 200:
+            # existing file
+            sha = response.json().get("sha")
+            logger.info("📝 Existing README.md found — will update it.")
+        elif response.status_code == 404:
+            logger.info("🆕 No README.md found on branch '%s' — will create a new one.", branch)
+        else:
+            # Other response codes are considered warnings but proceed to try create/update
+            logger.warning("⚠️ Unexpected response while checking README: %s - %s", response.status_code, response.text)
 
         # Prepare commit data
         content_b64 = base64.b64encode(content.encode("utf-8")).decode("utf-8")
@@ -92,15 +102,15 @@ def commit_readme_to_github(owner: str, repo: str, content: str, branch: str = "
         if sha:
             commit_data["sha"] = sha  # overwrite existing README.md
 
-        response = requests.put(url, headers=headers, json=commit_data)
-        if response.status_code in [200, 201]:
-            data = response.json()
+        put_resp = requests.put(url, headers=headers, json=commit_data)
+        if put_resp.status_code in [200, 201]:
+            data = put_resp.json()
             html_url = data.get("content", {}).get("html_url", "")
             logger.info(f"✅ README successfully committed → {html_url}")
             return {"success": True, "readme_url": html_url}
 
-        logger.error(f"❌ Failed to commit README: {response.status_code} - {response.text}")
-        return {"error": response.text}
+        logger.error(f"❌ Failed to commit README: {put_resp.status_code} - {put_resp.text}")
+        return {"error": put_resp.text}
 
     except Exception as e:
         logger.exception(f"❌ Exception while committing README: {e}")
@@ -109,24 +119,56 @@ def commit_readme_to_github(owner: str, repo: str, content: str, branch: str = "
 # ---------------- Core Agent Logic ----------------
 def generate_updated_readme(state: RepoState):
     """
-    Agent logic: fetch diffs → generate README → commit to main.
+    Agent logic: fetch diffs → generate README → commit to branch provided in state.
     """
     try:
         logger.info("🚀 Starting README update agent...")
         logger.info(f"🔍 Repo: {state['owner']}/{state['repo']} | Branch: {state['branch']}")
 
-        # ✅ Fetch diffs using your tool (automatically)
-        logger.info("🔧 Fetching commit diffs using GitHub tool...")
-        diff_result = fetch_commit_diffs(
-            owner=state["owner"],
-            repo=state["repo"],
-            base_sha=state["base_sha"],
-            head_sha=state["head_sha"]
-        )
+        # Fetch diffs using the StructuredTool (LangChain tool) via .invoke()
+        logger.info("🔧 Fetching commit diffs using GitHub tool (invoke)...")
+        # Correct invocation: pass a dict with string keys
+        try:
+            diff_result = fetch_commit_diffs.invoke({
+                "owner": state["owner"],
+                "repo": state["repo"],
+                "base_sha": state["base_sha"],
+                "head_sha": state["head_sha"]
+            })
+        except AttributeError:
+            # Some LangChain/tool setups may provide .run or .func — try fallbacks gracefully
+            logger.info("ℹ️ .invoke() not available on tool — trying .run() or .func() fallback.")
+            if hasattr(fetch_commit_diffs, "run"):
+                diff_result = fetch_commit_diffs.run({
+                    "owner": state["owner"],
+                    "repo": state["repo"],
+                    "base_sha": state["base_sha"],
+                    "head_sha": state["head_sha"]
+                })
+            elif hasattr(fetch_commit_diffs, "func"):
+                diff_result = fetch_commit_diffs.func(
+                    state["owner"],
+                    state["repo"],
+                    state["base_sha"],
+                    state["head_sha"]
+                )
+            else:
+                raise
+
+        # If tool returned a JSON string, try to parse it
+        if isinstance(diff_result, str):
+            try:
+                diff_result = json.loads(diff_result)
+            except Exception:
+                logger.debug("ℹ️ Diff tool returned a string that is not JSON. Proceeding with raw string.")
+
+        if not diff_result or "files" not in diff_result:
+            logger.error(f"❌ Failed to fetch diff data: {diff_result}")
+            return {"error": "No diff data returned"}
 
         if "error" in diff_result:
-            logger.error(f"❌ Diff fetch failed: {diff_result['error']}")
-            return {"error": diff_result["error"]}
+            logger.error(f"❌ Diff fetch returned error: {diff_result.get('error')}")
+            return {"error": diff_result.get("error")}
 
         state["files"] = diff_result.get("files", [])
         state["total_files_changed"] = diff_result.get("total_files_changed", len(state["files"]))
@@ -135,7 +177,7 @@ def generate_updated_readme(state: RepoState):
             logger.warning("⚠️ No file changes detected. Skipping README generation.")
             return {"messages": [{"role": "assistant", "content": "No changes detected."}]}
 
-        # ✅ Prepare input for LLM
+        # Prepare input for LLM
         commit_messages = "\n".join([f"- {msg}" for msg in state.get("commit_messages", [])])
         changed_files = "\n".join([f"- {f.get('filename')}" for f in state["files"]])
         diff_data = json.dumps(state["files"], indent=2)
@@ -145,14 +187,14 @@ def generate_updated_readme(state: RepoState):
             owner=state["owner"],
             branch=state["branch"],
             pusher=state.get("pusher", "unknown"),
-            repository_url=state["repository_url"],
-            compare_url=state["compare_url"],
+            repository_url=state.get("repository_url", ""),
+            compare_url=state.get("compare_url", ""),
             commit_messages=commit_messages,
             changed_files=changed_files,
             diff_data=diff_data
         )
 
-        # ✅ Generate README content
+        # Generate README content
         llm = get_llm()
         if not llm:
             return {"error": "Missing OpenAI API key"}
@@ -166,12 +208,18 @@ def generate_updated_readme(state: RepoState):
         readme_text = response.content.strip()
         logger.info(f"✅ README generated ({len(readme_text)} chars)")
 
-        # ✅ Commit README to GitHub (main branch)
-        commit_result = commit_readme_to_github(state["owner"], state["repo"], readme_text, branch=state["branch"])
+        # Commit README to GitHub on the branch provided by state
+        commit_result = commit_readme_to_github(
+            owner=state["owner"],
+            repo=state["repo"],
+            content=readme_text,
+            branch=state["branch"]
+        )
         if "error" in commit_result:
-            return {"error": commit_result["error"]}
+            logger.error(f"❌ README commit failed: {commit_result.get('error')}")
+            return {"error": commit_result.get("error")}
 
-        # ✅ Save locally for backup
+        # Save locally for backup
         os.makedirs("data", exist_ok=True)
         with open("data/UPDATED_README.md", "w", encoding="utf-8") as f:
             f.write(readme_text)
@@ -189,7 +237,6 @@ graph_builder = StateGraph(RepoState)
 graph_builder.add_node("update_readme", generate_updated_readme)
 graph_builder.add_edge(START, "update_readme")
 graph_builder.add_edge("update_readme", END) 
-
 
 readme_updater = graph_builder.compile()
 
